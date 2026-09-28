@@ -1,122 +1,58 @@
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
 export default async function handler(req, res) {
-  // Configure CORS headers for Vercel deployment
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-  );
-
-  // Handle preflight OPTIONS request
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  // Ensure request is POST
+  // CORS 처리 및 POST 방식 검증
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed. Please use POST.' });
+    return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  // Vercel 환경 변수 또는 요청 바디의 키 확인
+  const apiKey = process.env.GEMINI_API_KEY || req.body?.apiKey;
+
   if (!apiKey) {
-    return res.status(500).json({ 
-      error: 'GEMINI_API_KEY 환경 변수가 설정되지 않았습니다. Vercel 설정에서 API 키를 추가해주세요.' 
+    return res.status(400).json({
+      error: 'Gemini API 호출 실패: Vercel 배포 후 GEMINI_API_KEY를 설정하거나 우측 상단 [API 키 설정]에 유효한 키를 입력해주세요.'
     });
   }
 
   try {
-    const { image, mimeType = 'image/png', userNote = '', mode = 'full' } = req.body;
-
+    const { image } = req.body;
     if (!image) {
-      return res.status(400).json({ error: '분석할 이미지 데이터가 필요합니다.' });
+      return res.status(400).json({ error: '이미지가 전달되지 않았습니다.' });
     }
 
-    // Clean base64 string format if data URI prefix exists
+    const genAI = new GoogleGenerativeAI(apiKey);
+    // 가장 안정적이고 빠른 최신 비전 지원 모델 사용
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+    // base64 데이터 정제
     const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
+    const mimeType = image.match(/data:(.*);base64/)?.[1] || 'image/png';
 
-    const systemPrompt = `너는 대한민국 최고 수준의 1타 수학강사이자 친절한 AI 오답 전담 선생님이다.
-사용자가 제출한 수학 문제 이미지(학습자가 직접 푼 오답 또는 교재/시험지 문제)를 정밀하게 분석하여 다음 양식에 맞춰 완벽하고 명쾌하게 해설하라.
+    const prompt = `당신은 친절하고 유능한 수학 선생님입니다.
+제시된 이미지의 수학 문제를 분석하여 다음 순서와 형식으로 답변해주세요:
 
-### [해설 가이드라인]
-1. **📌 문제 인식 (Problem Statement)**:
-   - 이미지 속 수학 문제와 주어진 조건을 수식 포함 정확히 LaTeX 서식($...$ 또는 $$...$$)으로 정리.
+1. [문제 분석]: 문제 내용 정리
+2. [핵심 개념]: 사용되는 수학 공식 및 개념
+3. [단계별 풀이]: 오답 원인 지적 및 쉬운 풀이 과정
+4. [최종 정답]: 명확한 최종 답안`;
 
-2. **❌ 오답 원인 분석 (Error Diagnosis)**:
-   - 풀이가 포함되어 있는 경우, 어느 단계(Step)에서 개념 착오, 계산 실수, 또는 공식 오용이 발생했는지 원인을 명확하게 짚어줄 것.
-   - 문제만 있는 경우, 학생들이 가장 자주 범하는 오답 함정과 주의할 점 설명.
-
-3. **💡 단계별 정석 풀이 (Step-by-Step Solution)**:
-   - 1단계부터 최종 정답까지 누구나 이해할 수 있게 쉬운 말로 단계별 설명.
-   - 모든 수식과 계산 과정은 LaTeX($...$, $$...$$)을 적용하여 정교하게 작성.
-
-4. **🔑 핵심 개념 & 필수 공식 (Key Concepts)**:
-   - 이 문제를 해결하는 데 쓰인 핵심 수학 개념 2~3가지와 관련 공식 정리.
-
-5. **🎯 유사 쌍둥이 연습 문제 (Practice Problem)**:
-   - 복습을 위해 동일한 개념을 적용할 수 있는 유사한 난이도의 연습문제 1개 출제.
-   - [쌍둥이 문제 정답 및 풀이]를 밑에 접이식 형태처럼 명시.
-
-모든 수식은 KaTeX/MathJax 표준 문법인 $inline$ 및 $$block format$$을 엄격히 준수하라.`;
-
-    const userPromptText = userNote 
-      ? `[사용자의 추가 질문/요청]: ${userNote}\n\n첨부된 수학 문제 이미지를 분석하여 오답 노트를 작성해 주세요.` 
-      : `첨부된 수학 문제 이미지를 분석하여 자세한 오답 원인과 단계별 해설을 작성해 주세요.`;
-
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
-
-    const payload = {
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { text: userPromptText },
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: base64Data
-              }
-            }
-          ]
+    const result = await model.generateContent([
+      prompt,
+      {
+        inlineData: {
+          data: base64Data,
+          mimeType: mimeType
         }
-      ],
-      systemInstruction: {
-        parts: [{ text: systemPrompt }]
       }
-    };
+    ]);
 
-    const apiResponse = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
+    const response = await result.response;
+    const text = response.text();
 
-    if (!apiResponse.ok) {
-      const errorText = await apiResponse.text();
-      console.error('Gemini API Error:', errorText);
-      return res.status(apiResponse.status).json({ 
-        error: 'Gemini API 호출 중 오류가 발생했습니다.', 
-        details: errorText 
-      });
-    }
-
-    const result = await apiResponse.json();
-    const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!generatedText) {
-      return res.status(500).json({ error: 'AI 해설 답변을 생성할 수 없습니다.' });
-    }
-
-    return res.status(200).json({
-      success: true,
-      solution: generatedText
-    });
-
-  } catch (err) {
-    console.error('Server execution error:', err);
-    return res.status(500).json({ 
-      error: '서버 내부 처리 중 오류가 발생했습니다.', 
-      details: err.message 
-    });
+    return res.status(200).json({ result: text });
+  } catch (error) {
+    console.error('API Error Details:', error);
+    return res.status(500).json({ error: error.message || 'API 요청 처리 중 오류가 발생했습니다.' });
   }
 }
