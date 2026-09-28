@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MathDoc AI - 고등수학 오답 튜터</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React & ReactDOM (CDN) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel (JSX Transpiler) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- MathJax Configuration & Script -->
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true
+      },
+      options: {
+        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre']
+      }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    function App() {
+      const [input, setInput] = useState('');
+      const [image, setImage] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [currentAnalysis, setCurrentAnalysis] = useState(null);
+      const [showSolution, setShowSolution] = useState(false);
+      const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
+      const [showKeyModal, setShowKeyModal] = useState(false);
+
+      // MathJax 렌더링 트리거
+      useEffect(() => {
+        if (currentAnalysis && window.MathJax && window.MathJax.typesetPromise) {
+          setTimeout(() => {
+            window.MathJax.typesetPromise().catch((err) => console.log('MathJax typeset error:', err));
+          }, 100);
+        }
+      }, [currentAnalysis, showSolution]);
+
+      // API Key 저장
+      const saveApiKey = (key) => {
+        setApiKey(key);
+        localStorage.setItem('gemini_api_key', key);
+        setShowKeyModal(false);
+      };
+
+      // 이미지 업로드 핸들러
+      const handleImageUpload = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onloadend = () => setImage(reader.result);
+          reader.readAsDataURL(file);
+        }
+      };
+
+      // 추천 태그 클릭 핸들러
+      const handleTagClick = (tagName) => {
+        setInput((prev) => (prev ? `${prev}, ${tagName}` : tagName));
+      };
+
+      // 문제 분석 및 풀이 요청
+      const analyzeProblem = async () => {
+        if (!input.trim() && !image) {
+          alert("문제 사진을 올리거나 텍스트를 입력해 주세요!");
+          return;
+        }
+
+        setLoading(true);
+        setShowSolution(false);
+
+        const systemPrompt = `
+          너는 고3 수험생을 위한 친근하고 전문적인 수학 튜터야.
+          사용자가 제공한 수학 문제 사진이나 텍스트를 바탕으로 문제를 완벽히 풀이하고 다음 5개 섹션으로 응답해줘:
+          1. title: 문제 요약 제목
+          2. concept: 핵심 개념 요약 (3줄 이내)
+          3. mistakes: 자주 하는 실수 패턴
+          4. steps: 상세 단계별 문제 풀이 과정
+          5. problem: 유사 연습문제 1개
+          6. solution: 연습문제의 정답 및 상세 해설
+
+          규칙:
+          - 모든 수식은 반드시 LaTeX 형식 ($...$ 또는 $$...$$)으로 작성해.
+          - 모든 필드는 단일 문자열(String) 형식으로 응답해.
+        `;
+
+        try {
+          const contents = [];
+          if (image) {
+            const base64Data = image.split(',')[1];
+            const mimeType = image.split(',')[0].split(':')[1].split(';')[0];
+            contents.push({
+              inlineData: { mimeType, data: base64Data }
+            });
+          }
+          contents.push({ text: `문제/개념 설명: ${input || "이미지의 수학 문제를 정확히 풀어줘."}` });
+
+          // API Key가 설정되어 있으면 클라이언트 직접 호출, 없으면 서버리스 /api/generate 호출
+          let response;
+          if (apiKey) {
+            response = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [{ parts: contents }],
+                  systemInstruction: { parts: [{ text: systemPrompt }] },
+                  generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                      type: "OBJECT",
+                      properties: {
+                        title: { type: "string" },
+                        concept: { type: "string" },
+                        mistakes: { type: "string" },
+                        steps: { type: "string" },
+                        problem: { type: "string" },
+                        solution: { type: "string" }
+                      },
+                      required: ["title", "concept", "mistakes", "steps", "problem", "solution"]
+                    }
+                  }
+                })
+              }
+            );
+          } else {
+            response = await fetch('/api/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents: [{ parts: contents }] })
+            });
+          }
+
+          if (!response.ok) throw new Error('API 호출에 실패했습니다.');
+
+          const data = await response.json();
+          const resultText = data.candidates 
+            ? data.candidates[0].content.parts[0].text 
+            : data.text;
+
+          const parsed = JSON.parse(resultText);
+          setCurrentAnalysis(parsed);
+        } catch (error) {
+          console.error(error);
+          alert("분석 중 오류가 발생했습니다. API Key를 확인하거나 다시 시도해 주세요.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const resetAll = () => {
+        setInput('');
+        setImage(null);
+        setCurrentAnalysis(null);
+        setShowSolution(false);
+      };
+
+      return (
+        <div className="min-h-screen p-4 md:p-8">
+          <div className="max-w-4xl mx-auto">
+            {/* Header */}
+            <header className="flex justify-between items-center mb-8 bg-white p-4 rounded-2xl shadow-sm border">
+              <div className="flex items-center gap-3">
+                <div className="bg-blue-600 text-white p-2 rounded-xl text-xl font-bold">🎓</div>
+                <div>
+                  <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    MathDoc AI <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">고등수학 오답 튜터</span>
+                  </h1>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setShowKeyModal(true)}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-semibold rounded-lg transition-colors flex items-center gap-1"
+                >
+                  🔑 API Key
+                </button>
+                <button 
+                  onClick={resetAll}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-semibold rounded-lg transition-colors flex items-center gap-1"
+                >
+                  🔄 새 질문하기
+                </button>
+              </div>
+            </header>
+
+            {/* 메인 입력 카드 */}
+            <div className="bg-white rounded-3xl shadow-sm border border-slate-200 p-6 mb-8">
+              <h2 className="text-lg font-bold text-slate-800 mb-1 flex items-center gap-2">
+                <span className="w-2 h-5 bg-blue-600 rounded-full inline-block"></span>
+                어떤 문제를 틀렸나요?
+              </h2>
+              <p className="text-slate-500 text-sm mb-6">문제 사진을 업로드하거나, 틀린 개념/유형을 직접 입력해주세요!</p>
+
+              {/* 이미지 업로드 영역 */}
+              <div className="mb-4">
+                <label className="border-2 border-dashed border-blue-200 hover:border-blue-400 bg-blue-50/40 hover:bg-blue-50 transition-all rounded-2xl p-8 flex flex-col items-center justify-center cursor-pointer min-h-[160px]">
+                  {image ? (
+                    <div className="relative w-full max-h-48 flex justify-center">
+                      <img src={image} alt="업로드 문제" className="max-h-48 object-contain rounded-lg" />
+                      <button 
+                        onClick={(e) => { e.preventDefault(); setImage(null); }}
+                        className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-1 text-xs font-bold"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xl mb-2">📸</div>
+                      <p className="font-bold text-blue-600">문제 사진 올리기 (클릭 또는 드래그)</p>
+                      <p className="text-xs text-slate-400 mt-1">교재, 시험지, 풀이 노트 사진 가능 (PNG, JPG)</p>
+                    </>
+                  )}
+                  <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                </label>
+              </div>
+
+              {/* 텍스트 입력 영역 */}
+              <div className="mb-6">
+                <textarea
+                  className="w-full p-4 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-400 outline-none resize-none h-24 text-sm"
+                  placeholder="사진과 함께 보충 설명이 있거나 텍스트로 입력하려면 여기에 적어주세요 (예: 이차함수 최댓값 구하기)"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                />
+              </div>
+
+              {/* 자주 틀리는 오답 유형 추천 태그 */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 mb-6">
+                <p className="text-xs font-bold text-slate-500 mb-3 flex items-center gap-1">
+                  🪄 자주 틀리는 오답 유형
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-semibold mr-2">고1 (공통수학)</span>
+                    <div className="inline-flex flex-wrap gap-1.5 mt-1">
+                      {['📌 이차함수의 최대최소', '📌 원과 직선의 위치관계', '📌 등차수열과 등비수열'].map((tag) => (
+                        <button
+                          key={tag}
+                          onClick={() => handleTagClick(tag.replace('📌 ', ''))}
+                          className="text-xs bg-white border border-slate-200 hover:border-blue-400 text-slate-700 px-2.5 py-1 rounded-full transition-colors"
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-semibold mr-2">고2~고3 (대수, 미적분, 확률, 기하)</span>
+                    <div className="inline-flex flex-wrap gap-1.5 mt-1">
+                      {['🎯 미분계수와 접선의 방정식', '🎯 정적분과 넓이', '🎯 삼각함수의 뜻과 그래프'].map((tag) => (
+                        <button
+                          key={tag}
+                          onClick={() => handleTagClick(tag.replace('🎯 ', ''))}
+                          className="text-xs bg-white border border-slate-200 hover:border-indigo-400 text-slate-700 px-2.5 py-1 rounded-full transition-colors"
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 분석 시작 버튼 */}
+              <button
+                onClick={analyzeProblem}
+                disabled={loading}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-100 text-lg disabled:bg-slate-300"
+              >
+                {loading ? '🤖 AI가 오답 원인을 분석 중입니다...' : '🤳 오답 원인 분석 시작하기'}
+              </button>
+            </div>
+
+            {/* 분석 결과 화면 */}
+            {currentAnalysis && (
+              <div className="bg-white rounded-3xl shadow-md border border-indigo-100 p-6 space-y-6 animate-in fade-in duration-300">
+                <div className="border-b pb-4">
+                  <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">분석 리포트</span>
+                  <h2 className="text-2xl font-bold text-slate-800 mt-2">{currentAnalysis.title}</h2>
+                </div>
+
+                {/* 핵심 개념 */}
+                <div>
+                  <h3 className="font-bold text-blue-600 mb-2">📚 핵심 개념 요약</h3>
+                  <div className="bg-blue-50/60 p-4 rounded-xl text-slate-800 leading-relaxed border border-blue-100">
+                    {currentAnalysis.concept}
+                  </div>
+                </div>
+
+                {/* 실수 패턴 & 단계별 접근 */}
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="bg-rose-50/60 p-4 rounded-xl border border-rose-100">
+                    <h3 className="font-bold text-rose-600 mb-2">⚠️ 자주 하는 실수 패턴</h3>
+                    <div className="text-slate-700 text-sm whitespace-pre-wrap">{currentAnalysis.mistakes}</div>
+                  </div>
+                  <div className="bg-emerald-50/60 p-4 rounded-xl border border-emerald-100">
+                    <h3 className="font-bold text-emerald-600 mb-2">🧭 풀이 접근 순서</h3>
+                    <div className="text-slate-700 text-sm whitespace-pre-wrap">{currentAnalysis.steps}</div>
+                  </div>
+                </div>
+
+                {/* 유사 연습문제 */}
+                <div className="border-t pt-6">
+                  <h3 className="font-bold text-purple-600 mb-3">✏️ 유사 연습문제</h3>
+                  <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 mb-4 text-slate-800 leading-relaxed">
+                    {currentAnalysis.problem}
+                  </div>
+
+                  {!showSolution ? (
+                    <button
+                      onClick={() => setShowSolution(true)}
+                      className="w-full py-3 border-2 border-dashed border-purple-300 rounded-xl text-purple-600 font-bold hover:bg-purple-50 transition-colors"
+                    >
+                      👁️ 정답 및 풀이 보기
+                    </button>
+                  ) : (
+                    <div className="bg-purple-50 p-5 rounded-xl border border-purple-100 text-slate-800 whitespace-pre-wrap leading-relaxed">
+                      <h4 className="font-bold text-purple-700 mb-2">💡 정답 및 상세 해설</h4>
+                      {currentAnalysis.solution}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* API Key 모달 */}
+            {showKeyModal && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+                <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-xl">
+                  <h3 className="text-lg font-bold mb-2">🔑 Gemini API Key 입력</h3>
+                  <p className="text-xs text-slate-500 mb-4">API 키를 입력하면 서버리스 연동 없이 개인 키로 직접 동작시킬 수 있습니다.</p>
+                  <input
+                    type="password"
+                    placeholder="AIzaSy..."
+                    defaultValue={apiKey}
+                    id="keyInput"
+                    className="w-full p-3 border rounded-xl mb-4 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setShowKeyModal(false)} className="px-4 py-2 text-slate-500 text-sm">취소</button>
+                    <button
+                      onClick={() => saveApiKey(document.getElementById('keyInput').value)}
+                      className="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl"
+                    >
+                      저장하기
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
