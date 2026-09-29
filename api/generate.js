@@ -1,28 +1,22 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export default async function handler(req, res) {
-  // POST 요청만 허용
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method Not Allowed" });
   }
 
   try {
     const { image, apiKey } = req.body;
-
-    // API Key 우선순위 (클라이언트 전달 키 -> Vercel 환경 변수)
     const finalApiKey = apiKey || process.env.GEMINI_API_KEY;
 
     if (!finalApiKey) {
-      return res.status(400).json({
-        error: "Gemini API 키가 없습니다. 화면 우측 상단의 [🔑 API 키 설정]에서 키를 등록하거나 Vercel 환경 변수(GEMINI_API_KEY)를 설정해 주세요."
-      });
+      return res.status(400).json({ error: "API 키가 필요합니다." });
     }
 
     if (!image) {
-      return res.status(400).json({ error: "분석할 이미지 데이터가 없습니다." });
+      return res.status(400).json({ error: "이미지 데이터가 없습니다." });
     }
 
-    // Base64 데이터 추출 및 MIME 타입 분리
     const matches = image.match(/^data:(image\/\w+);base64,(.+)$/);
     let mimeType = "image/png";
     let base64Data = image;
@@ -33,18 +27,23 @@ export default async function handler(req, res) {
     }
 
     const genAI = new GoogleGenerativeAI(finalApiKey);
-    
-    // 모델 지정 (최신 gemini-2.5-flash 지원)
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
+    // 수식을 LaTeX 형식($...$ 및 $$...$$)으로 출력하도록 프롬프트 지정
     const prompt = `
 이 이미지에 포함된 수학 문제를 분석하여 단계별로 친절하게 풀어주세요.
 
-다음 형식으로 응답해 주세요:
-1. **[문제 확인]**: 인식된 문제 내용 정돈
-2. **[핵심 개념/공식]**: 문제 풀이에 쓰이는 주요 수학 개념이나 공식
-3. **[단계별 풀이]**: 차근차근 과정 설명
-4. **[최종 정답]**: 최종 답 강조
+[수식 작성 규칙]
+1. 모든 수학 식, 변수, 숫자 표현은 반드시 LaTeX 문법을 사용하세요.
+2. 문장 내부 수식은 인라인 LaTeX 형식($수식$)을 사용하세요. (예: $y = ax^2 + bx + c$, $x = -\\frac{b}{2a}$)
+3. 별도 줄로 강조할 중요한 계산식은 디스플레이 LaTeX 형식($$수식$$)을 사용하세요.
+4. 백틱(\`) 문자는 절대로 사용하지 마세요.
+
+다음 구성을 따라 응답해 주세요:
+1. **[문제 확인]**
+2. **[핵심 개념/공식]**
+3. **[단계별 풀이]**
+4. **[최종 정답]**
 `;
 
     const imagePart = {
@@ -62,8 +61,6 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error("Gemini API Error:", error);
-    return res.status(500).json({
-      error: error.message || "문제 풀이 처리 중 오류가 발생했습니다."
-    });
+    return res.status(500).json({ error: error.message || "서버 에러가 발생했습니다." });
   }
 }
