@@ -27,7 +27,7 @@ export default async function handler(req, res) {
     }
 
     const genAI = new GoogleGenerativeAI(finalApiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     // 수식을 LaTeX 형식($...$ 및 $$...$$)으로 출력하도록 프롬프트 지정
     const prompt = `
