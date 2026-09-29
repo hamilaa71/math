@@ -1,58 +1,69 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export default async function handler(req, res) {
-  // CORS 처리 및 POST 방식 검증
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
-
-  // Vercel 환경 변수 또는 요청 바디의 키 확인
-  const apiKey = process.env.GEMINI_API_KEY || req.body?.apiKey;
-
-  if (!apiKey) {
-    return res.status(400).json({
-      error: 'Gemini API 호출 실패: Vercel 배포 후 GEMINI_API_KEY를 설정하거나 우측 상단 [API 키 설정]에 유효한 키를 입력해주세요.'
-    });
+  // POST 요청만 허용
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method Not Allowed" });
   }
 
   try {
-    const { image } = req.body;
-    if (!image) {
-      return res.status(400).json({ error: '이미지가 전달되지 않았습니다.' });
+    const { image, apiKey } = req.body;
+
+    // API Key 우선순위 (클라이언트 전달 키 -> Vercel 환경 변수)
+    const finalApiKey = apiKey || process.env.GEMINI_API_KEY;
+
+    if (!finalApiKey) {
+      return res.status(400).json({
+        error: "Gemini API 키가 없습니다. 화면 우측 상단의 [🔑 API 키 설정]에서 키를 등록하거나 Vercel 환경 변수(GEMINI_API_KEY)를 설정해 주세요."
+      });
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    // 가장 안정적이고 빠른 최신 비전 지원 모델 사용
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    if (!image) {
+      return res.status(400).json({ error: "분석할 이미지 데이터가 없습니다." });
+    }
 
-    // base64 데이터 정제
-    const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
-    const mimeType = image.match(/data:(.*);base64/)?.[1] || 'image/png';
+    // Base64 데이터 추출 및 MIME 타입 분리
+    const matches = image.match(/^data:(image\/\w+);base64,(.+)$/);
+    let mimeType = "image/png";
+    let base64Data = image;
 
-    const prompt = `당신은 친절하고 유능한 수학 선생님입니다.
-제시된 이미지의 수학 문제를 분석하여 다음 순서와 형식으로 답변해주세요:
+    if (matches && matches.length === 3) {
+      mimeType = matches[1];
+      base64Data = matches[2];
+    }
 
-1. [문제 분석]: 문제 내용 정리
-2. [핵심 개념]: 사용되는 수학 공식 및 개념
-3. [단계별 풀이]: 오답 원인 지적 및 쉬운 풀이 과정
-4. [최종 정답]: 명확한 최종 답안`;
+    const genAI = new GoogleGenerativeAI(finalApiKey);
+    
+    // 모델 지정 (최신 gemini-2.5-flash 지원)
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-    const result = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          data: base64Data,
-          mimeType: mimeType
-        }
+    const prompt = `
+이 이미지에 포함된 수학 문제를 분석하여 단계별로 친절하게 풀어주세요.
+
+다음 형식으로 응답해 주세요:
+1. **[문제 확인]**: 인식된 문제 내용 정돈
+2. **[핵심 개념/공식]**: 문제 풀이에 쓰이는 주요 수학 개념이나 공식
+3. **[단계별 풀이]**: 차근차근 과정 설명
+4. **[최종 정답]**: 최종 답 강조
+`;
+
+    const imagePart = {
+      inlineData: {
+        data: base64Data,
+        mimeType: mimeType
       }
-    ]);
+    };
 
+    const result = await model.generateContent([prompt, imagePart]);
     const response = await result.response;
     const text = response.text();
 
     return res.status(200).json({ result: text });
+
   } catch (error) {
-    console.error('API Error Details:', error);
-    return res.status(500).json({ error: error.message || 'API 요청 처리 중 오류가 발생했습니다.' });
+    console.error("Gemini API Error:", error);
+    return res.status(500).json({
+      error: error.message || "문제 풀이 처리 중 오류가 발생했습니다."
+    });
   }
 }
