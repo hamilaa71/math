@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="description" content="수학 문제를 사진·손글씨로 인식하고 힌트부터 단계별 풀이, 개념, 유사문제를 보여주는 풀이 앱">
+<meta name="description" content="수학 문제를 인식하여 깔끔한 단계별 풀이를 제공합니다.">
 <meta name="theme-color" content="#1c6b59">
 <title>풀이노트</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=IBM+Plex+Mono:wght@500&family=Noto+Sans+KR:wght@400;500;700&display=swap">
 
-<!-- MathJax 라이브러리 추가 (LaTeX 수식 렌더링용) -->
+<!-- MathJax 라이브러리 (LaTeX 수식 렌더링용) -->
 <script>
   MathJax = {
     tex: {
@@ -33,7 +33,7 @@
 [hidden]{display:none!important}
 body{margin:0;background-color:var(--paper);background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:24px 24px;color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.65}
 .wrap{max-width:720px;margin:0 auto;padding:28px 16px 64px;display:flex;flex-direction:column;gap:20px}
-h1,h2{margin:0}
+h1,h2,h3{margin:0}
 button{font:inherit;cursor:pointer}
 header{display:flex;flex-direction:column;gap:6px}
 .brand{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
@@ -41,7 +41,7 @@ header{display:flex;flex-direction:column;gap:6px}
 .brand h1{font-family:var(--f-exam);font-weight:700;font-size:30px}
 .brand .tag{font-family:var(--f-mono);font-size:11px;color:var(--accent)}
 header p{color:var(--muted);font-size:14px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:14px}
 .sec-head{display:flex;align-items:center;justify-content:space-between}
 .sec-head h2{font-size:17px;font-weight:700}
 .eyebrow{font-family:var(--f-mono);font-size:11px;color:var(--muted)}
@@ -65,7 +65,14 @@ textarea{width:100%;min-height:110px;font:inherit;font-family:var(--f-exam);font
 .status.err{border-color:var(--bad);background:var(--bad-soft)}
 .status.err .dot{background:var(--bad);animation:none}
 @keyframes pulse{50%{opacity:.25}}
-.result-box{white-space:pre-wrap;word-break:break-word;font-family:var(--f-exam);font-size:16px;line-height:1.8}
+
+/* 풀이 결과 가독성 개선 스타일 */
+.result-box{font-family:var(--f-exam);font-size:16px;line-height:1.8;color:var(--ink)}
+.result-box h3{font-size:18px;font-weight:700;color:var(--accent);margin-top:20px;margin-bottom:10px;border-bottom:2px solid var(--accent-soft);padding-bottom:6px}
+.result-box h3:first-child{margin-top:0}
+.result-box p{margin:8px 0}
+.result-box ul, .result-box ol{padding-left:20px;margin:8px 0}
+.result-box li{margin-bottom:6px}
 </style>
 </head>
 <body>
@@ -75,7 +82,7 @@ textarea{width:100%;min-height:110px;font:inherit;font-family:var(--f-exam);font
       <div class="brand-title"><h1>풀이노트</h1><span class="tag">고등 수학</span></div>
       <button class="btn" id="api-key-btn">🔑 API 키 설정</button>
     </div>
-    <p>문제를 사진으로 찍거나 손글씨로 올리면 AI가 단계별 풀이와 해설을 제공합니다.</p>
+    <p>문제를 사진으로 찍거나 손글씨로 올리면 핵심 단계별 풀이를 제공합니다.</p>
   </header>
 
   <section class="card" id="input-card">
@@ -225,8 +232,20 @@ textarea{width:100%;min-height:110px;font:inherit;font-family:var(--f-exam);font
     $('status-text').textContent = msg;
   }
 
+  // 간단한 마크다운 파서 (가독성 향상)
+  function renderMarkdown(text) {
+    let html = text
+      .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+      .replace(/^## (.*$)/gim, '<h3>$1</h3>')
+      .replace(/^\*\*([^*]+)\*\*/gim, '<strong>$1</strong>')
+      .replace(/\*\*([^*]+)\*\*/gim, '<strong>$1</strong>')
+      .replace(/\n\n/g, '</p><p>')
+      .replace(/\n/g, '<br>');
+    return '<p>' + html + '</p>';
+  }
+
   $('go-btn').onclick = async function(){
-    showStatus('AI가 문제를 분석 및 수식 변환 중입니다...', false);
+    showStatus('AI가 문제 풀이를 작성 중입니다...', false);
     $('result-card').hidden = true;
     $('go-btn').disabled = true;
 
@@ -255,10 +274,10 @@ textarea{width:100%;min-height:110px;font:inherit;font-family:var(--f-exam);font
 
       showStatus(null);
       var container = $('result-content');
-      container.textContent = data.result;
+      container.innerHTML = renderMarkdown(data.result);
       $('result-card').hidden = false;
 
-      // MathJax로 LaTeX 수식 예쁘게 렌더링
+      // MathJax 수식 렌더링
       if (window.MathJax) {
         MathJax.typesetPromise([container]);
       }
